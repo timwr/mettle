@@ -242,14 +242,17 @@ int rundcow(const char * fromfile, const char * tofile)
 		return 3;
 	}
 
-	size_t size = st.st_size;
+	size_t size = st2.st_size;
 	if (st2.st_size != st.st_size) {
 		/*LOGV("warning: new file size (%zd) and file old size (%zd) differ\n", st.st_size, st2.st_size);*/
+		if (st.st_size < size) {
+			close(f);
+			close(f2);
+			return 4;
+		}
 	}
-
-	if (st2.st_size > size) {
-		size = st2.st_size;
-	}
+		/*size = st2.st_size;*/
+	/*}*/
 	/*LOGV("size %zd\n\n", size);*/
 
 	mem_arg.patch = malloc(size);
@@ -257,15 +260,14 @@ int rundcow(const char * fromfile, const char * tofile)
 		free(mem_arg.patch);
 		close(f);
 		close(f2);
-		return 4;
+		return 5;
 	}
 
-	memset(mem_arg.patch, 0, size);
-	if (read(f2, mem_arg.patch, st2.st_size) == -1) {
+	if (read(f2, mem_arg.patch, size) == -1) {
 		free(mem_arg.patch);
 		close(f);
 		close(f2);
-		return 5;
+		return 6;
 	}
 
 	close(f2);
@@ -280,7 +282,7 @@ int rundcow(const char * fromfile, const char * tofile)
 		/*LOGV("mmap");*/
 		free(mem_arg.patch);
 		close(f);
-		return 6;
+		return 7;
 	}
 
 	/*LOGV("[*] mmap %p", map);*/
