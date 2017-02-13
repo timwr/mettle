@@ -16,7 +16,11 @@ DEPS=$(ROOT)/deps
 OUTPUTDIR=$(BUILD)/data
 
 ifeq "$(shell uname -s)" "Darwin"
-	export SDKROOT=macosx10.8
+    ifneq (,$(findstring arm,$(TARGET)))
+        export SDKROOT=$(shell xcrun --sdk iphoneos --show-sdk-path)
+    else
+        export SDKROOT=$(shell xcrun --sdk macosx --show-sdk-path)
+    endif
 endif
 
 CFLAGS:=$(CFLAGS) -Os -I$(BUILD)/include
@@ -35,7 +39,7 @@ ifneq "$(TARGET)" "native"
 	HOST=$(TARGET)
 endif
 ifneq "$(HOST)" ""
-    CONFIGURE:=$(CONFIGURE) --host=$(HOST)
+    CONFIGURE:=$(CONFIGURE) --host=$(HOST) --build=x86_64-apple-darwin --target=$(HOST)
 endif
 
 # if Debug is enabled, build with debug symbols, otherwise strip the symbol table

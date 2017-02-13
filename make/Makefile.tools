@@ -15,6 +15,12 @@ ifneq "$(TARGET)" "native"
         LD=$(TARGET)-ld
         RANLIB=$(TARGET)-ranlib
     endif
+    ifneq (,$(findstring arm,$(TARGET)))
+OSXCFLAGS:=-isysroot $(SDKROOT) -mios-version-min=8.1 -target arm-apple-darwin -arch armv7
+CFLAGS:=$(CFLAGS) $(OSXCFLAGS)
+CPPFLAGS:=$(CPPFLAGS) $(OSXCFLAGS)
+LDFLAGS:=$(LDFLAGS) $(OSXCFLAGS)
+    endif
 endif
 
 TAR=tar

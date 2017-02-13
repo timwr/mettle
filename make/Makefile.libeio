@@ -11,6 +11,7 @@ $(BUILD)/libeio/configure:
 $(BUILD)/libeio/Makefile: build/tools $(BUILD)/libeio/configure $(LIBEIO_DEPS)
 	@echo "Configuring libeio for $(TARGET)"
 	@cd $(BUILD)/libeio; \
+		echo "$(ENV) ./$(CONFIGURE) $(LOGBUILD)" ; \
 		$(ENV) ./$(CONFIGURE) $(LOGBUILD)
 
 $(BUILD)/lib/libeio.a: $(BUILD)/libeio/Makefile
