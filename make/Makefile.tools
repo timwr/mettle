@@ -16,9 +16,9 @@ ifneq "$(TARGET)" "native"
         RANLIB=$(TARGET)-ranlib
     endif
     ifneq (,$(findstring arm,$(TARGET)))
-OSXCFLAGS:=-isysroot $(SDKROOT) -mios-version-min=8.1 -target arm-apple-darwin -arch armv7
-CFLAGS:=$(CFLAGS) $(OSXCFLAGS)
-CPPFLAGS:=$(CPPFLAGS) $(OSXCFLAGS)
+OSXCFLAGS:=-isysroot $(SDKROOT) -mios-version-min=7.1 -target arm-apple-darwin -arch armv7
+CFLAGS:=$(CFLAGS) $(OSXCFLAGS) -I$(SDKROOT)/usr/include/
+CPPFLAGS:=$(CPPFLAGS) $(OSXCFLAGS) -I$(SDKROOT)/usr/include/
 LDFLAGS:=$(LDFLAGS) $(OSXCFLAGS)
     endif
 endif
