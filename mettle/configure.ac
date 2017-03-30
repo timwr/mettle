@@ -19,6 +19,7 @@ case $host_os in
 		HOST_OS=apple
 		OBJCFLAGS="$OBJCFLAGS -fobjc-arc"
 		AC_DEFINE(HAVE_WEBCAM)
+		AS_IF([test "x$host_os" != xapple-darwin], [ AC_DEFINE(HAVE_SCREENSHOT) ], [ ])
 		;;
 	*linux*)
 		HOST_OS=linux
