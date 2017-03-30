@@ -33,43 +33,37 @@ static int xioctl(int fd, int request, void *arg)
   int r;
   do {
     r = ioctl(fd, request, arg);
-  } while (-1 == r && EINTR == errno);
+  } while (r == -1 && errno == EINTR);
   return r;
 }
 
-struct tlv_packet *webcam_get_frame(struct tlv_handler_ctx *ctx)
+int camera_frame() 
 {
+  struct v4l2_buffer buf;
   fd_set fds;
   struct timeval tv;
-  int r;
   FD_ZERO(&fds);
   FD_SET(fd, &fds);
-
-  /* Timeout. */
   tv.tv_sec = 1;
   tv.tv_usec = 0;
 
-  r = select(fd + 1, &fds, NULL, NULL, &tv);
-  if (r == -1) {
-    return tlv_packet_response_result(ctx, TLV_RESULT_FAILURE);
+  if (select(fd + 1, &fds, NULL, NULL, &tv) == -1) {
+    return -1;
   }
 
-  struct v4l2_buffer buf;
   CLEAR(buf);
   buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
   buf.memory = V4L2_MEMORY_MMAP;
-  if (xioctl(fd, VIDIOC_DQBUF, &buf) == -1 ||
-      buf.index >= n_buffers) {
-    return tlv_packet_response_result(ctx, TLV_RESULT_FAILURE);
-  }
-
-  struct tlv_packet *p = tlv_packet_response_result(ctx, TLV_RESULT_SUCCESS);
-  p = tlv_packet_add_raw(p, TLV_TYPE_WEBCAM_IMAGE, buffers[buf.index].start, buf.length);
+  int r;
+  do {
+    r = ioctl(fd, VIDIOC_DQBUF, &buf);
+  } while (r == -1 && (errno == EINTR || errno == EAGAIN));
 
   if (xioctl(fd, VIDIOC_QBUF, &buf) == -1) {
-    return tlv_packet_response_result(ctx, TLV_RESULT_FAILURE);
+    return -1;
   }
-  return p;
+
+  return buf.index;
 }
 
 int camera_open(int id)
@@ -93,8 +87,13 @@ int camera_open(int id)
   return fd;
 }
 
-int camera_start()
+int camera_start(int id)
 {
+  fd = camera_open(id);
+  if (fd == -1) {
+    return -1;
+  }
+
   struct v4l2_format fmt;
   CLEAR(fmt);
   fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -107,7 +106,7 @@ int camera_start()
   
   struct v4l2_requestbuffers req;
   CLEAR(req);
-  req.count = 4;
+  req.count = 1;
   req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
   req.memory = V4L2_MEMORY_MMAP;
 
@@ -172,6 +171,35 @@ int camera_start()
   return 0;
 }
 
+int camera_stop()
+{
+  enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+  if (xioctl(fd, VIDIOC_STREAMOFF, &type) == -1) {
+    return -1;
+  }
+
+  unsigned int i;
+  for (i = 0; i < n_buffers; ++i) {
+    if (munmap(buffers[i].start, buffers[i].length) == -1) {
+      return -1;
+    }
+  }
+  free(buffers);
+  close(fd);
+  return 0;
+}
+
+struct tlv_packet *webcam_get_frame(struct tlv_handler_ctx *ctx)
+{
+  int index = camera_frame();
+  if (index != -1) {
+    struct tlv_packet *p = tlv_packet_response_result(ctx, TLV_RESULT_SUCCESS);
+    p = tlv_packet_add_raw(p, TLV_TYPE_WEBCAM_IMAGE, buffers[index].start, buffers[index].length);
+    return p;
+  }
+  return tlv_packet_response_result(ctx, TLV_RESULT_FAILURE);
+}
+
 struct tlv_packet *webcam_start(struct tlv_handler_ctx *ctx)
 {
   uint32_t deviceIndex = 0;
@@ -179,12 +207,7 @@ struct tlv_packet *webcam_start(struct tlv_handler_ctx *ctx)
   tlv_packet_get_u32(ctx->req, TLV_TYPE_WEBCAM_INTERFACE_ID, &deviceIndex);
   tlv_packet_get_u32(ctx->req, TLV_TYPE_WEBCAM_QUALITY, &quality);
 
-  int result = camera_open(deviceIndex - 1);
-  if (result == -1) {
-    return tlv_packet_response_result(ctx, TLV_RESULT_FAILURE);
-  }
-
-  result = camera_start();
+  int result = camera_start(deviceIndex - 1);
   if (result == -1) {
     return tlv_packet_response_result(ctx, TLV_RESULT_FAILURE);
   }
@@ -194,22 +217,11 @@ struct tlv_packet *webcam_start(struct tlv_handler_ctx *ctx)
 
 struct tlv_packet *webcam_stop(struct tlv_handler_ctx *ctx)
 {
-  enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-  if (xioctl(fd, VIDIOC_STREAMOFF, &type) == -1) {
-    return tlv_packet_response_result(ctx, TLV_RESULT_FAILURE);
+  int rc = TLV_RESULT_SUCCESS;
+  if (camera_stop() == -1) {
+    rc = TLV_RESULT_FAILURE;
   }
-
-  unsigned int i;
-  for (i = 0; i < n_buffers; ++i) {
-    if (munmap(buffers[i].start, buffers[i].length) == -1) {
-      return tlv_packet_response_result(ctx, TLV_RESULT_FAILURE);
-    }
-  }
-  free(buffers);
-
-  close(fd);
-
-  return tlv_packet_response_result(ctx, TLV_RESULT_SUCCESS);
+  return tlv_packet_response_result(ctx, rc);
 }
 
 struct tlv_packet *webcam_list(struct tlv_handler_ctx *ctx)
@@ -224,6 +236,7 @@ struct tlv_packet *webcam_list(struct tlv_handler_ctx *ctx)
 
     struct v4l2_capability cap;
     int result = xioctl(fd, VIDIOC_QUERYCAP, &cap);
+    close(fd);
 
     if (result == -1) {
       if (errno == EINVAL) {
