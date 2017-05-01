@@ -46,6 +46,7 @@ libmettle_la_SOURCES += stdapi/clipboard/osx_clipboard.m
 endif
 if HOST_LINUX
 libmettle_la_SOURCES += stdapi/webcam/linux_webcam.c
+libmettle_la_SOURCES += stdapi/ui/linux_key.c
 endif
 
 if !HAVE_REALLOCARRAY
