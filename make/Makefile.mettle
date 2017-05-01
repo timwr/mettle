@@ -3,6 +3,7 @@ include make/Makefile.libdnet
 include make/Makefile.libev
 include make/Makefile.libeio
 include make/Makefile.libsigar
+include make/Makefile.libx11
 include make/Makefile.libz
 include make/Makefile.mbedtls
 
@@ -28,7 +29,8 @@ $(BUILD)/mettle/Makefile: build/tools $(ROOT)/mettle/configure \
 	$(BUILD)/lib/libev.a \
 	$(BUILD)/lib/libmbedtls.a \
 	$(BUILD)/lib/libsigar.a \
-	$(BUILD)/lib/libdnet.a
+	$(BUILD)/lib/libdnet.a \
+	$(BUILD)/lib/libx11.a
 	@echo "Configuring mettle for $(TARGET)"
 	@mkdir -p $(BUILD)/mettle
 	@cd $(BUILD)/mettle; \
