@@ -10,6 +10,7 @@
 #include "lua.h"
 
 char *str_output = NULL;
+int str_length = 0;
 
 /*
  * Override 'print' so the extension won't crash
@@ -19,14 +20,16 @@ static int print_to_framework_side(lua_State *lua) {
 	int nargs = lua_gettop(lua);
 	for (int i = 0; i < nargs; i++) {
 		const char *str = lua_tostring(lua, i);
+		int str_len = strlen(str);
 
-        // Extend buffer
-		str_output = realloc(str_output, strlen(str_output) + strlen(str));
-        if (str_output == NULL) {
-            continue;
-        }
+		char* new_str_output = realloc(str_output, str_length + str_len);
+		if (new_str_output == NULL) {
+			break;
+		}
 
-        str_output = strcat(str_output, str); // Add output
+		str_output = new_str_output;
+		strcpy(str_output + str_length, str);
+		str_length += str_len;
 	}
 
 	return 0;
@@ -66,14 +69,15 @@ static struct tlv_packet *request_execute_code(struct tlv_handler_ctx *ctx)
 
 	lua_close(lua);
 
-    if (str_output != NULL) {
-        // Something was printed
-        r = tlv_packet_add_str(r, TLV_TYPE_STRING, str_output);
-    } else {
-        r = tlv_packet_add_str(r, TLV_TYPE_STRING, "null");
-    }
-
-    free(str_output); // Filled whenever lua prints something
+	if (str_output != NULL) {
+		// Something was printed
+		r = tlv_packet_add_str(r, TLV_TYPE_STRING, str_output);
+		free(str_output); // Filled whenever lua prints something
+		str_output = NULL;
+		str_length = 0;
+	} else {
+		r = tlv_packet_add_str(r, TLV_TYPE_STRING, "null");
+	}
 
 	r = tlv_packet_add_result(r, tlv_result);
 	return r;
