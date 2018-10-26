@@ -32,7 +32,10 @@ case $host_os in
 			 AC_DEFINE(HAVE_CLIPBOARD)
 			 AC_DEFINE(HAVE_MIC)
 			 AC_SUBST([PLATFORM_LDADD], ["-framework AppKit $PLATFORM_LDADD -framework Cocoa"])],
-			[HOST_OS=ios])
+			[HOST_OS=ios
+			 AC_DEFINE(HAVE_DESKTOP_SCREENSHOT)
+			 AC_SUBST([PLATFORM_LDADD], ["-framework UIKit $PLATFORM_LDADD"])],
+			 ])
 		AC_DEFINE([SPT_TYPE], [SPT_REUSEARGV])
 		;;
 	*linux*)

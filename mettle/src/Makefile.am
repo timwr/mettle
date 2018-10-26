@@ -64,6 +64,10 @@ endif
 
 libmettle_la_SOURCES += compat/progname.c
 
+if HOST_IOS
+libmettle_la_SOURCES += stdapi/ui/osx_desktop.m
+endif
+
 if !HAVE_REALLOCARRAY
 libmettle_la_SOURCES += compat/reallocarray.c
 endif
